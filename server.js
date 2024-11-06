@@ -61,7 +61,16 @@ io.on("connection", (socket) => {
   });
 
   socket.on("move", (direction) => {
-    players[socket.id].direction = direction;
+    const player = players[socket.id];
+    if (!player) return;
+     if (
+       (direction === "up" && player.direction !== "down") ||
+       (direction === "down" && player.direction !== "up") ||
+       (direction === "left" && player.direction !== "right") ||
+       (direction === "right" && player.direction !== "left")
+     ) {
+       player.direction = direction;
+     }
   });
 
   startGameLoop();
@@ -83,17 +92,21 @@ function startGameLoop() {
 }
 
 function updateGameState() {
+  let hasEatenFood = false;
   Object.keys(players).forEach((id) => {
     const player = players[id];
     movePlayer(player);
 
     if (player.x === food.x && player.y === food.y) {
       player.score++;
+      hasEatenFood = true;
       player.segments.push({ ...player.segments[player.segments.length - 1] });
       food = generateRandomFood(); 
       io.emit("food-update", food);
     }
   });
+
+  if (!hasEatenFood) checkCollisions();
 
   io.emit("state-update", players);
 }
@@ -127,6 +140,43 @@ function movePlayer(player) {
   ];
   player.x = head.x;
   player.y = head.y;
+}
+
+const checkCollisions = () => {
+  Object.keys(players).forEach(id => {
+    const player = players[id];
+    const head = player.segments[0];
+
+    const selfCollision = player.segments
+      .slice(1)
+      .some((segment) => segment.x === head.x && segment.y === head.y);
+
+    if (selfCollision) {
+      console.log(`Game over for player ${id} (self-collision)`);
+      io.to(id).emit("game-over", { reason: "self-collision" });
+      delete players[id];
+      io.emit("player-left", id);
+      return;
+    }
+
+
+    Object.keys(players).forEach(otherId => {
+      if(id !== otherId){
+        const otherPlayer = players[otherId];
+        const collision = otherPlayer.segments.some(
+          (segment) => segment.x === head.x && segment.y === head.y
+        );
+
+        if(collision){
+          otherPlayer.score += 5;
+          console.log(`Game over for player ${id}`);
+          io.to(id).emit("game-over", { reason: "collision-with-other-snake" });
+          delete players[id]; 
+          io.emit("player-left", id);  
+        }
+      }
+    })
+  })
 }
 
 server.listen(5000, () => {
